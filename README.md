@@ -1,2 +1,2 @@
-# lgsf-bto-prototype
-Prototype components for LGSF Beam Transfer Optics
+# LGSF Prototype Software
+Prototype components for LGSF
