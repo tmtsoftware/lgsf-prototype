@@ -1,4 +1,4 @@
-package lgsf.btoprototypehcd
+package lgsf.pacprototypehcd
 
 import akka.actor.typed.scaladsl.ActorContext
 import csw.command.client.messages.TopLevelActorMessage
@@ -15,19 +15,19 @@ import scala.concurrent.{ExecutionContextExecutor}
 /**
  * Domain specific logic should be written in below handlers.
  * This handlers gets invoked when component receives messages/commands from other component/entity.
- * For example, if one component sends Submit(Setup(args)) command to BtoPrototypeHcd,
+ * For example, if one component sends Submit(Setup(args)) command to PacPrototypeHcd,
  * This will be first validated in the supervisor and then forwarded to Component TLA which first invokes validateCommand hook
  * and if validation is successful, then onSubmit hook gets invoked.
  * You can find more information on this here : https://tmtsoftware.github.io/csw/commons/framework.html
  */
-class BtoPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: CswContext) extends ComponentHandlers(ctx, cswCtx) {
+class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: CswContext) extends ComponentHandlers(ctx, cswCtx) {
 
   import cswCtx._
   implicit val ec: ExecutionContextExecutor = ctx.executionContext
   private val log                           = loggerFactory.getLogger
 
   override def initialize(): Unit = {
-    log.info("Initializing bto.prototypeHcd...")
+    log.info("Initializing pac.prototypeHcd...")
   }
 
   override def onLocationTrackingEvent(trackingEvent: TrackingEvent): Unit = {}
