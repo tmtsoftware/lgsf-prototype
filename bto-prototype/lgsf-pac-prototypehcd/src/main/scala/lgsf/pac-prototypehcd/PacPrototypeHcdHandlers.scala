@@ -13,12 +13,36 @@ import csw.params.core.models.Id
 import scala.concurrent.{ExecutionContextExecutor}
 
 /**
- * Domain specific logic should be written in below handlers.
- * This handlers gets invoked when component receives messages/commands from other component/entity.
- * For example, if one component sends Submit(Setup(args)) command to PacPrototypeHcd,
- * This will be first validated in the supervisor and then forwarded to Component TLA which first invokes validateCommand hook
- * and if validation is successful, then onSubmit hook gets invoked.
- * You can find more information on this here : https://tmtsoftware.github.io/csw/commons/framework.html
+ *  The Pre-Alignment Cameras (PACs) are used to determine the positions of the laser beams on the optical components
+ *  (e.g., mirrors, lenses) using scattered light. Each HCD communicates with a PAC. The expected exposure frame rate
+ *  will be 1 Hz or less for CoG calculations. The HCD can also stream raw pixels to the Engineering GUI for image
+ *  display which is useful during manual alignment.
+ *
+ *  The optical component boundary is determined using ambient light by turning on a LED momentarily (triggered by
+ *  PAC strobe signal). Each PAC may image one or multiple optical components. In the latter case, the frame will be
+ *  split into multiple regions based on each component boundary information. Within each region, there should be only
+ *  a single beam (or overlapped beams treated as a single beam), from which the CoG (or matched filters if needed)
+ *  will be calculated to determine the beam position (in pixel coordinates). The total intensity per region is also
+ *  calculated which is converted to laser power from configured throughput value. The PAC HCD computes beam position
+ *  measurements either in the local coordinate (defined on the optical surface along minor and major axis) or in the
+ *  reference coordinate if a mapping matrix is provided. The mirror tip/tilt to PAC measurement interaction matrix
+ *  and its inverse link the control and sensor together.
+ *
+ *  The algorithm is described in Section 3.1 CoG Measurement of LGSF Adjustment and Control Algorithms
+ *    https://docushare.tmt.org/docushare/dsweb/Get/Document-67700
+ *
+ *  LGSF Common HCD Framework Custom Actors:
+ *
+ *  - Command Sender: used by the handlers to send commands to HCDs to avoid blocking.
+ *  - Group Handlers: handle more complex commands, or calculations, etc. There may be multiple such handlers with
+ *      each handling a specific type of calculation, such as closed loop control, or moving mechanisms for
+ *      calibrations.
+ *  - Hardware Command Senders: convert received commands to hardware units and send to the hardware. There may be
+ *      multiple such senders if the hardware supports multiple independent axes or functionalities.
+ *  - Hardware receivers: receive status update and sensor readings from the hardware. There may also be multiple
+ *      such receivers.
+ *  - State Manager: manages the state and is responsible for publishing Events and currentState.
+ *
  */
 class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: CswContext) extends ComponentHandlers(ctx, cswCtx) {
 
