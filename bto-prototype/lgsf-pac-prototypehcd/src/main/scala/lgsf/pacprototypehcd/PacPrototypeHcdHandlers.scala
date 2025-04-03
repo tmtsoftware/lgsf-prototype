@@ -10,7 +10,7 @@ import csw.params.commands.ControlCommand
 import csw.time.core.models.UTCTime
 import csw.params.core.models.Id
 
-import scala.concurrent.{ExecutionContextExecutor}
+import scala.concurrent.ExecutionContextExecutor
 
 /**
  *  The Pre-Alignment Cameras (PACs) are used to determine the positions of the laser beams on the optical components
