@@ -41,6 +41,11 @@ Run the container cmd script with arguments. For example:
 * Run the HCD in a standalone mode with a local config file (The standalone config format is different than the container format):
 
 ```
-sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/BtoPrototypeHcdStandalone.conf"
+sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/BtoPrototypehcdStandalone.conf"
 ```
 
+* Start the HCD and assembly in a container using the Java implementations:
+
+```
+sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/JBtoPrototypeContainer.conf"
+```

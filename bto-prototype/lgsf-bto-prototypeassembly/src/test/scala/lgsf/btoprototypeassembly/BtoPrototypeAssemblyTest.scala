@@ -1,6 +1,6 @@
 package lgsf.btoprototypeassembly
 
-import csw.location.api.models.Connection.AkkaConnection
+import csw.location.api.models.Connection.PekkoConnection
 import csw.prefix.models.Prefix
 import csw.location.api.models.{ComponentId, ComponentType}
 import csw.testkit.scaladsl.CSWService.{AlarmServer, EventServer}
@@ -21,9 +21,9 @@ class BtoPrototypeAssemblyTest extends ScalaTestFrameworkTestKit(AlarmServer, Ev
   }
 
   test("Assembly should be locatable using Location Service") {
-    val connection = AkkaConnection(ComponentId(Prefix("LGSF.bto.prototypeAssembly"), ComponentType.Assembly))
-    val akkaLocation = Await.result(locationService.resolve(connection, 10.seconds), 10.seconds).get
+    val connection = PekkoConnection(ComponentId(Prefix("LGSF.bto.prototypeAssembly"), ComponentType.Assembly))
+    val pekkoLocation = Await.result(locationService.resolve(connection, 10.seconds), 10.seconds).get
 
-    akkaLocation.connection shouldBe connection
+    pekkoLocation.connection shouldBe connection
   }
 }
