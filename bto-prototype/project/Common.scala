@@ -1,7 +1,7 @@
 import org.scalafmt.sbt.ScalafmtPlugin.autoImport.scalafmtOnCompile
-import sbt.Keys._
+import sbt.Keys.*
 import sbt.plugins.JvmPlugin
-import sbt.{url, _}
+import sbt.{url, *}
 
 object Common extends AutoPlugin {
 
@@ -9,11 +9,11 @@ object Common extends AutoPlugin {
 
   override def requires: Plugins = JvmPlugin
 
-  override lazy val projectSettings: Seq[Setting[_]] = Seq(
+  override lazy val projectSettings: Seq[Setting[?]] = Seq(
     organization := "com.github.tmtsoftware.bto-prototype",
     organizationName := "TMT",
     scalaVersion := Libs.ScalaVersion,
-    organizationHomepage := Some(url("http://www.tmt.org")),
+    organizationHomepage := Some(url("https://www.tmt.org/")),
 
     scalacOptions ++= Seq(
       "-encoding",

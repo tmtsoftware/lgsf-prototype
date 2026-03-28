@@ -1,12 +1,12 @@
-import sbt._
+import sbt.*
 
 object Coverage extends AutoPlugin {
   import scoverage.ScoverageSbtPlugin
-  import ScoverageSbtPlugin.autoImport._
+  import ScoverageSbtPlugin.autoImport.*
 
   override def requires: Plugins = ScoverageSbtPlugin
 
-  override def projectSettings: Seq[Setting[_]] = Seq(
+  override def projectSettings: Seq[Setting[?]] = Seq(
     coverageEnabled := true,
     coverageMinimumStmtTotal := 80,
     coverageFailOnMinimum := true,

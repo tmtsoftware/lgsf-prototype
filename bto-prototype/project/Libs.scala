@@ -1,7 +1,7 @@
 import java.io.FileReader
 import java.util.Properties
 
-import sbt._
+import sbt.*
 
 import scala.util.control.NonFatal
 
