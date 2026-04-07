@@ -1,4 +1,4 @@
-package lgsf.`pac-prototypehcd`
+package lgsf.pacprototypehcd
 
 import csw.location.api.models.Connection.PekkoConnection
 import csw.location.api.models.{ComponentId, ComponentType}
@@ -21,7 +21,7 @@ class PacPrototypeHcdTest extends ScalaTestFrameworkTestKit(AlarmServer, EventSe
   }
 
   test("HCD should be locatable using Location Service") {
-    val connection = PekkoConnection(ComponentId(Prefix("LGSF.pac.prototypeHcd"), ComponentType.HCD))
+    val connection    = PekkoConnection(ComponentId(Prefix("LGSF.pac.prototypeHcd"), ComponentType.HCD))
     val pekkoLocation = Await.result(locationService.resolve(connection, 10.seconds), 10.seconds).get
 
     pekkoLocation.connection shouldBe connection

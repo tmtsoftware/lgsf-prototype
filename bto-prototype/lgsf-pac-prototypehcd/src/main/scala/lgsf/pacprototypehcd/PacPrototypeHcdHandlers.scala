@@ -1,4 +1,4 @@
-package lgsf.`pac-prototypehcd`
+package lgsf.pacprototypehcd
 
 import org.apache.pekko.actor.typed.scaladsl.ActorContext
 import csw.command.client.messages.TopLevelActorMessage

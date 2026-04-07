@@ -20,7 +20,7 @@ import scala.concurrent.ExecutionContextExecutor
  * and if validation is successful, then onSubmit hook gets invoked.
  * You can find more information on this here : https://tmtsoftware.github.io/csw/commons/framework.html
  */
-class BtoPrototypeAssemblyHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: CswContext) extends ComponentHandlers(ctx,cswCtx) {
+class BtoPrototypeAssemblyHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: CswContext) extends ComponentHandlers(ctx, cswCtx) {
 
   import cswCtx._
   implicit val ec: ExecutionContextExecutor = ctx.executionContext

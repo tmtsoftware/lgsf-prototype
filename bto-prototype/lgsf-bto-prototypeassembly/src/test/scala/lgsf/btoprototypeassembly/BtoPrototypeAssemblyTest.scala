@@ -21,7 +21,7 @@ class BtoPrototypeAssemblyTest extends ScalaTestFrameworkTestKit(AlarmServer, Ev
   }
 
   test("Assembly should be locatable using Location Service") {
-    val connection = PekkoConnection(ComponentId(Prefix("LGSF.bto.prototypeAssembly"), ComponentType.Assembly))
+    val connection    = PekkoConnection(ComponentId(Prefix("LGSF.bto.prototypeAssembly"), ComponentType.Assembly))
     val pekkoLocation = Await.result(locationService.resolve(connection, 10.seconds), 10.seconds).get
 
     pekkoLocation.connection shouldBe connection
