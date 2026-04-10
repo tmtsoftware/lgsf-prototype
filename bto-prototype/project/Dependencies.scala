@@ -16,6 +16,7 @@ object Dependencies {
     Libs.`scalatest` % Test,
     Libs.`junit4-interface` % Test,
     Libs.`testng-6-7` % Test,
+    Libs.`nom-tam-fits`
   )
 
   val BtoPrototypeDeploy: Seq[ModuleID] = Seq(

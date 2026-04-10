@@ -8,11 +8,12 @@ import scala.util.control.NonFatal
 object Libs {
   val ScalaVersion = "3.6.4"
 
-  val `scalatest` = "org.scalatest" %% "scalatest" % "3.2.19" //Apache License 2.0
-  val `dotty-cps-async` = "com.github.rssh" %% "dotty-cps-async" % "0.9.23"
+  val `scalatest`        = "org.scalatest" %% "scalatest" % "3.2.19" //Apache License 2.0
+  val `dotty-cps-async`  = "com.github.rssh" %% "dotty-cps-async" % "0.9.23"
   val `junit4-interface` = "com.github.sbt" % "junit-interface" % "0.13.3"
-  val `testng-6-7` = "org.scalatestplus" %% "testng-6-7" % "3.2.10.0"
-  val `mockito` = "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0"
+  val `testng-6-7`       = "org.scalatestplus" %% "testng-6-7" % "3.2.10.0"
+  val `mockito`          = "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0"
+  val `nom-tam-fits`     = "gov.nasa.gsfc.heasarc"       % "nom-tam-fits"              % "1.22.0"
 }
 
 object CSW {
