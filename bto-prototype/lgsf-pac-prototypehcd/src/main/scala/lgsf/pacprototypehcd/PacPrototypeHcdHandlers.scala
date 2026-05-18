@@ -1,7 +1,7 @@
 package lgsf.pacprototypehcd
 
 import com.typesafe.config.ConfigFactory
-import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
+import org.apache.pekko.actor.typed.scaladsl.ActorContext
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 import csw.command.client.messages.TopLevelActorMessage
 import csw.event.api.scaladsl.EventPublisher
@@ -11,12 +11,12 @@ import csw.location.api.models.TrackingEvent
 import csw.params.commands.CommandIssue.UnsupportedCommandIssue
 import csw.params.commands.CommandResponse.*
 import csw.params.commands.{ControlCommand, Setup}
-import csw.params.core.generics.KeyType
-import csw.params.core.models.ArrayData
-import csw.params.events.{EventName, SystemEvent}
+import csw.params.core.generics.{Key, KeyType}
 import csw.time.core.models.UTCTime
 import csw.params.core.models.Id
-import csw.prefix.models.Prefix
+import java.time.LocalDateTime
+import java.time.Duration
+import java.time.format.DateTimeFormatter
 
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration.*
@@ -43,22 +43,67 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
 
   private val log    = loggerFactory.getLogger
   private val config = ConfigFactory.load()
+  private def errorDetails(ex: Throwable): String = {
+    val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
+    s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top"
+  }
 
   private val camera: PacCamera = {
     val simMode = config.getBoolean("pac-prototype-hcd.simulation-mode")
     val width   = config.getInt("camera.width")
     val height  = config.getInt("camera.height")
-    new PacCamera(simMode, width, height)
+    val protocol: PacCameraProtocol =
+      if (simMode) new PacCameraSimulated(width, height)
+      else new PacCameraNative()
+    new PacCamera(protocol)
   }
 
-  private val frameProcessor: ActorRef[FrameProcessor.Command] =
-    ctx.spawn(
-      FrameProcessor(camera, eventService.defaultPublisher, componentInfo.prefix),
-      "frameProcessor"
-    )
+  private var vbdsPublisherRef: Option[ActorRef[VbdsPublisherActor.Command]] = None
+  private var frameProcessorRef: Option[ActorRef[FrameProcessor.Command]]    = None
+
+  private def getOrCreateVbdsPublisher(): Option[ActorRef[VbdsPublisherActor.Command]] = {
+    if (vbdsPublisherRef.isEmpty) {
+      try {
+        if (config.hasPath("pac-prototype-hcd.vbds")) {
+          val vbdsCfg = config.getConfig("pac-prototype-hcd.vbds")
+          val settings = VbdsPublisherActor.Settings(
+            enabled = vbdsCfg.getBoolean("enabled"),
+            host = vbdsCfg.getString("host"),
+            port = vbdsCfg.getInt("port"),
+            streamName = vbdsCfg.getString("stream-name"),
+            contentType = vbdsCfg.getString("content-type"),
+            autoCreateStream = vbdsCfg.getBoolean("auto-create-stream"),
+            requestTimeout = Duration.ofMillis(vbdsCfg.getLong("request-timeout-millis"))
+          )
+          if (settings.enabled) vbdsPublisherRef = Some(ctx.spawn(VbdsPublisherActor(settings), "vbdsPublisher"))
+        }
+      }
+      catch {
+        case ex: Exception =>
+          log.error(s"VBDS publisher init failed: ${errorDetails(ex)}")
+      }
+    }
+    vbdsPublisherRef
+  }
+
+  private def getOrCreateFrameProcessor(): ActorRef[FrameProcessor.Command] = {
+    frameProcessorRef.getOrElse {
+      val ref = ctx.spawn(
+        FrameProcessor(camera, eventService.defaultPublisher, componentInfo.prefix, getOrCreateVbdsPublisher()),
+        "frameProcessor"
+      )
+      frameProcessorRef = Some(ref)
+      ref
+    }
+  }
 
   override def initialize(): Unit =
     log.info("Initializing pac.prototypeHcd...")
+    log.info(
+      s"simulation-mode=${config.getBoolean("pac-prototype-hcd.simulation-mode")} protocol=${camera.protocolName}"
+    )
+    log.info(s"default camera-ip=${config.getString("pac-prototype-hcd.camera-ip")}")
+    log.info(s"default frame-period-millis=${config.getLong("pac-prototype-hcd.frame-period-millis")}")
 
   override def onLocationTrackingEvent(trackingEvent: TrackingEvent): Unit = {}
 
@@ -73,77 +118,138 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
 
       case setup: Setup if setup.commandName.name == "ConnectCamera" =>
         val ip = setup
-          .get(PacPrototypeHcdHandlers.ipAddressKey)
+          .get(PacPrototypeHcdHandlers.cameraIpKey)
           .map(_.head)
           .getOrElse(config.getString("pac-prototype-hcd.camera-ip"))
+        log.debug(s"ConnectCamera received runId=$runId ip=$ip")
         try {
+          log.info(s"Connecting camera using protocol=${camera.protocolName} ip=$ip")
           camera.connect(ip)
-          log.info(s"Camera connected: $ip")
+          log.info(s"Camera connected: ip=$ip protocol=${camera.protocolName}")
           Completed(runId)
         }
         catch {
           case e: Exception =>
-            log.error(s"Camera connect failed: ${e.getMessage}")
+            log.error(s"Camera connect failed: ${errorDetails(e)}")
             Error(runId, e.getMessage)
         }
 
       case _: Setup if controlCommand.commandName.name == "DisconnectCamera" =>
-        camera.disconnect()
-        log.info("Camera disconnected")
-        Completed(runId)
+        log.debug(s"DisconnectCamera received runId=$runId")
+        try {
+          camera.disconnect()
+          log.info("Camera disconnected")
+          Completed(runId)
+        }
+        catch {
+          case ex: Exception =>
+            log.error(s"DisconnectCamera failed: ${errorDetails(ex)}")
+            Error(runId, ex.getMessage)
+        }
 
       case setup: Setup if setup.commandName.name == "ConfigureCamera" =>
-        setup.get(PacPrototypeHcdHandlers.exposureTimeUsKey).map(_.head).foreach { t =>
-          camera.setExposureTime(t.toDouble)
-          log.info(s"ExposureTime set to ${t}us")
+        try {
+          log.debug(
+            s"ConfigureCamera received runId=$runId exposure=${setup.get(PacPrototypeHcdHandlers.exposureTimeUsKey).map(_.head)} gain=${setup.get(PacPrototypeHcdHandlers.gainKey).map(_.head)}"
+          )
+          setup.get(PacPrototypeHcdHandlers.exposureTimeUsKey).map(_.head).foreach { t =>
+            camera.setExposureTime(t.toDouble)
+            log.info(s"ExposureTime set to ${t}us")
+          }
+          setup.get(PacPrototypeHcdHandlers.gainKey).map(_.head).foreach { g =>
+            camera.setGain(g.toDouble)
+            log.info(s"Gain set to $g")
+          }
+          Completed(runId)
         }
-        setup.get(PacPrototypeHcdHandlers.gainKey).map(_.head).foreach { g =>
-          camera.setGain(g.toDouble)
-          log.info(s"Gain set to $g")
+        catch {
+          case ex: Exception =>
+            log.error(s"ConfigureCamera failed: ${errorDetails(ex)}")
+            Error(runId, ex.getMessage)
         }
-        Completed(runId)
 
       case setup: Setup if setup.commandName.name == "StartStream" =>
-        val period = setup
-          .get(PacPrototypeHcdHandlers.periodMillisKey)
-          .map(_.head)
-          .getOrElse(config.getLong("pac-prototype-hcd.frame-period-millis"))
-        frameProcessor ! FrameProcessor.Start(period.millis)
-        log.info(s"Stream started, period=${period}ms")
-        Completed(runId)
+        try {
+          val period = setup
+            .get(PacPrototypeHcdHandlers.periodMillisKey)
+            .map(_.head)
+            .getOrElse(config.getLong("pac-prototype-hcd.frame-period-millis"))
+          log.debug(s"StartStream received runId=$runId periodMillis=$period")
+          getOrCreateFrameProcessor() ! FrameProcessor.Start(period.millis)
+          log.info(s"Stream started, period=${period}ms")
+          Completed(runId)
+        }
+        catch {
+          case ex: Exception =>
+            log.error(s"StartStream failed: ${errorDetails(ex)}")
+            Error(runId, ex.getMessage)
+        }
 
       case _: Setup if controlCommand.commandName.name == "StopStream" =>
-        frameProcessor ! FrameProcessor.Stop
-        log.info("Stream stopped")
-        Completed(runId)
+        try {
+          log.debug(s"StopStream received runId=$runId")
+          frameProcessorRef.foreach(_ ! FrameProcessor.Stop)
+          log.info("Stream stopped")
+          Completed(runId)
+        }
+        catch {
+          case ex: Exception =>
+            log.error(s"StopStream failed: ${errorDetails(ex)}")
+            Error(runId, ex.getMessage)
+        }
 
       case setup: Setup if setup.commandName.name == "TakeSingleExposure" =>
-        setup.get(PacPrototypeHcdHandlers.exposureTimeUsKey).map(_.head).foreach { t =>
-          camera.setExposureTime(t.toDouble)
+        try {
+          setup.get(PacPrototypeHcdHandlers.exposureTimeUsKey).map(_.head).foreach { t =>
+            camera.setExposureTime(t.toDouble)
+          }
+          val timeout = setup
+            .get(PacPrototypeHcdHandlers.timeoutMsKey)
+            .map(_.head)
+            .getOrElse(5000)
+
+          val formatter       = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+          val timestamp       = LocalDateTime.now().format(formatter)
+          val baseName        = "pac"
+          val homePath        = System.getProperty("user.home")
+          val defaultPath     = s"${homePath}/tmpData"
+          val defaultFilePath = s"${defaultPath}/${baseName}_${timestamp}.fits"
+
+          val filePath = setup
+            .get(PacPrototypeHcdHandlers.singleExposureFilePathKey)
+            .map(_.head)
+            .getOrElse(defaultFilePath)
+          log.debug(s"TakeSingleExposure received runId=$runId timeoutMs=$timeout filePath=$filePath")
+          log.info(s"Taking single exposure using protocol=${camera.protocolName} timeoutMs=$timeout")
+          camera.takeSingleExposure(timeout) match {
+            case Some(frame) =>
+              log.info(
+                s"Single exposure acquired: ${frame.width}x${frame.height} ts=${frame.timestamp} bytes=${frame.data.length} protocol=${camera.protocolName}"
+              )
+              FrameProcessor.writeFrameToFits(frame, filePath)
+              log.debug(s"Wrote single exposure FITS to filePath=$filePath")
+              getOrCreateVbdsPublisher().foreach(_ ! VbdsPublisherActor.PublishFrame(frame))
+              Completed(runId)
+            case None =>
+              log.error("Single exposure timed out or failed")
+              Error(runId, "Frame acquisition failed")
+          }
         }
-        val timeout = setup
-          .get(PacPrototypeHcdHandlers.timeoutMsKey)
-          .map(_.head)
-          .getOrElse(5000)
-        camera.takeSingleExposure(timeout) match {
-          case Some(frame) =>
-            val event = FrameProcessor.buildFrameEvent(componentInfo.prefix, frame)
-            eventService.defaultPublisher.publish(event)
-            log.info(s"Single exposure acquired: ${frame.width}x${frame.height}")
-            Completed(runId)
-          case None =>
-            log.error("Single exposure timed out or failed")
-            Error(runId, "Frame acquisition failed")
+        catch {
+          case ex: Exception =>
+            log.error(s"Single exposure failed: ${errorDetails(ex)}")
+            Error(runId, ex.getMessage)
         }
 
       case _ =>
+        log.warn(s"Unsupported command received runId=$runId name=${controlCommand.commandName.name}")
         Invalid(runId, UnsupportedCommandIssue(s"Unknown command: ${controlCommand.commandName.name}"))
     }
 
   override def onOneway(runId: Id, controlCommand: ControlCommand): Unit = {}
 
   override def onShutdown(): Unit = {
-    frameProcessor ! FrameProcessor.Stop
+    frameProcessorRef.foreach(_ ! FrameProcessor.Stop)
     camera.disconnect()
   }
 
@@ -157,97 +263,10 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
 }
 
 object PacPrototypeHcdHandlers {
-  val ipAddressKey      = KeyType.StringKey.make("ipAddress")
-  val exposureTimeUsKey = KeyType.FloatKey.make("exposureTimeUs")
-  val gainKey           = KeyType.FloatKey.make("gain")
-  val periodMillisKey   = KeyType.LongKey.make("periodMillis")
-  val timeoutMsKey      = KeyType.IntKey.make("timeoutMs")
-}
-
-// ---------------------------------------------------------------------------
-// FrameProcessor — Pekko actor that drives the continuous acquisition loop
-// ---------------------------------------------------------------------------
-object FrameProcessor {
-  sealed trait Command
-  final case class Start(period: FiniteDuration) extends Command
-  case object Stop                               extends Command
-  case object Tick                               extends Command
-
-  // CSW event keys for the published cameraFrame event
-  val frameWidthKey     = KeyType.IntKey.make("width")
-  val frameHeightKey    = KeyType.IntKey.make("height")
-  val frameTimestampKey = KeyType.LongKey.make("timestamp")
-  val frameDataKey      = KeyType.ByteArrayKey.make("frameData")
-
-  def buildFrameEvent(prefix: Prefix, frame: CameraFrame): SystemEvent =
-    SystemEvent(prefix, EventName("cameraFrame"))
-      .add(frameWidthKey.set(frame.width))
-      .add(frameHeightKey.set(frame.height))
-      .add(frameTimestampKey.set(frame.timestamp))
-      .add(frameDataKey.set(ArrayData.fromArray(frame.data)))
-
-  def apply(camera: PacCamera, publisher: EventPublisher, prefix: Prefix): Behavior[Command] =
-    Behaviors.setup { _ =>
-      Behaviors.withTimers { timers =>
-        idle(timers, camera, publisher, prefix)
-      }
-    }
-
-  private def idle(
-      timers: TimerScheduler[Command],
-      camera: PacCamera,
-      publisher: EventPublisher,
-      prefix: Prefix
-  ): Behavior[Command] =
-    Behaviors.receive { (ctx, msg) =>
-      msg match {
-        case Start(period) =>
-          try {
-            camera.startStream()
-            timers.startTimerAtFixedRate(Tick, period)
-            ctx.log.info(s"FrameProcessor started, period=$period")
-          }
-          catch {
-            case e: Exception => ctx.log.error(s"Failed to start camera stream: ${e.getMessage}")
-          }
-          running(timers, camera, publisher, prefix, ctx)
-
-        case Stop =>
-          ctx.log.info("FrameProcessor already idle")
-          Behaviors.same
-
-        case Tick =>
-          Behaviors.same
-      }
-    }
-
-  private def running(
-      timers: TimerScheduler[Command],
-      camera: PacCamera,
-      publisher: EventPublisher,
-      prefix: Prefix,
-      ctx: ActorContext[Command]
-  ): Behavior[Command] =
-    Behaviors.receiveMessage {
-      case Tick =>
-        camera.getStreamFrame(5000).foreach { frame =>
-          implicit val ec = ctx.executionContext
-          publisher.publish(buildFrameEvent(prefix, frame))
-          ctx.log.debug(s"Published cameraFrame ${frame.width}x${frame.height}")
-        }
-        Behaviors.same
-
-      case Start(newPeriod) =>
-        timers.cancel(Tick)
-        timers.startTimerAtFixedRate(Tick, newPeriod)
-        ctx.log.info(s"FrameProcessor period updated to $newPeriod")
-        Behaviors.same
-
-      case Stop =>
-        timers.cancel(Tick)
-        try camera.stopStream()
-        catch { case e: Exception => ctx.log.error(s"Error stopping camera stream: ${e.getMessage}") }
-        ctx.log.info("FrameProcessor stopped")
-        idle(timers, camera, publisher, prefix)
-    }
+  val cameraIpKey: Key[String]               = KeyType.StringKey.make("ipAddress")
+  val singleExposureFilePathKey: Key[String] = KeyType.StringKey.make("filepath")
+  val exposureTimeUsKey: Key[Float]          = KeyType.FloatKey.make("exposureTimeUs")
+  val gainKey: Key[Float]                    = KeyType.FloatKey.make("gain")
+  val periodMillisKey: Key[Long]             = KeyType.LongKey.make("periodMillis")
+  val timeoutMsKey: Key[Int]                 = KeyType.IntKey.make("timeoutMs")
 }

@@ -6,6 +6,7 @@ object Dependencies {
     CSW.`csw-framework`,
     CSW.`csw-testkit` % Test,
     Libs.`scalatest` % Test,
+    Libs.`mockito` % Test,
     Libs.`junit4-interface` % Test,
     Libs.`testng-6-7` % Test,
   )
@@ -16,7 +17,9 @@ object Dependencies {
     Libs.`scalatest` % Test,
     Libs.`junit4-interface` % Test,
     Libs.`testng-6-7` % Test,
-    Libs.`nom-tam-fits`
+    Libs.`pekko-actor-testkit-typed` % Test,
+    Libs.`nom-tam-fits`,
+    Libs.`jnr-ffi`
   )
 
   val BtoPrototypeDeploy: Seq[ModuleID] = Seq(

@@ -14,6 +14,8 @@ object Libs {
   val `testng-6-7`       = "org.scalatestplus" %% "testng-6-7" % "3.2.10.0"
   val `mockito`          = "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0"
   val `nom-tam-fits`     = "gov.nasa.gsfc.heasarc"       % "nom-tam-fits"              % "1.22.0"
+  val `jnr-ffi`          = "com.github.jnr" % "jnr-ffi" % "2.2.17"
+  val `pekko-actor-testkit-typed` = "org.apache.pekko" %% "pekko-actor-testkit-typed" % "1.1.3"
 }
 
 object CSW {

@@ -1,65 +1,156 @@
 package lgsf.pacprototypehcd
 
-import java.nio.{ByteBuffer, ByteOrder}
-import java.util.Arrays
+import com.imperx.camera.nativebridge.JnrImperxBinding
+import com.imperx.camera.{CameraConfig, CameraSession, CameraSystem, StreamSession}
 
-case class CameraFrame(width: Int, height: Int, timestamp: Long, data: Array[Byte])
+// 1. Define the protocol interface
+trait PacCameraProtocol {
+  def initialize(ipAddress: String): Int
+  def shutdown(): Unit
+  def setExposureTime(microseconds: Double): Int
+  def setGain(gain: Double): Int
+  def startStream(): Int
+  def stopStream(): Int
+  def takeSingleExposure(timeoutMs: Int): CameraFrame | Null
+  def getStreamFrame(timeoutMs: Int): CameraFrame | Null
+  def lastError: Option[String] = None
+}
 
-/**
- * Interface to the Imperx C1911 camera via JNI.
- * When simulationMode=true, returns synthesized Gaussian spot images without loading
- * the native library. Set simulation-mode=true in application.conf for unit testing.
- *
- * Frame wire format returned by JNI methods:
- *   Bytes  0- 3  width  (int32, little-endian)
- *   Bytes  4- 7  height (int32, little-endian)
- *   Bytes  8-15  timestamp (int64, little-endian, nanoseconds)
- *   Bytes 16+    pixel data (8-bit grayscale, row-major)
- */
-class PacCamera(simulationMode: Boolean, simWidth: Int, simHeight: Int) {
+// 2. The Real Native Implementation (Production) via imperx-camera project
+class PacCameraNative extends PacCameraProtocol {
+  private var system: Option[CameraSystem]         = None
+  private var session: Option[CameraSession]       = None
+  private var streamSession: Option[StreamSession] = None
+  private var exposureMicros: Option[Double]       = None
+  private var gain: Option[Double]                 = None
+  private var lastErr: Option[String]              = None
 
-  if (!simulationMode) {
-    System.loadLibrary("pac-camera-jni")
-  }
+  override def lastError: Option[String] = lastErr
 
-  def connect(ipAddress: String): Unit = {
-    if (!simulationMode) {
-      val rc = nativeInitialize(ipAddress)
-      if (rc != 0) throw new RuntimeException(s"Camera connect failed: code $rc")
+  override def initialize(ipAddress: String): Int = {
+    try {
+      lastErr = None
+      closeAll()
+      val binding      = JnrImperxBinding.load("imperx_bridge")
+      val cameraSystem = CameraSystem(binding)
+      val cameraInfo = cameraSystem
+        .listCameras()
+        .find(_.ipAddress.contains(ipAddress))
+        .orElse(cameraSystem.listCameras().headOption)
+        .getOrElse(throw new RuntimeException("No Imperx cameras discovered"))
+      val config     = CameraConfig(exposureMicros = exposureMicros, gain = gain, pixelFormat = Some("Mono8"))
+      val camSession = cameraSystem.open(cameraInfo.id, config)
+      system = Some(cameraSystem)
+      session = Some(camSession)
+      0
+    }
+    catch {
+      case ex: Throwable =>
+        val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
+        lastErr = Some(s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top")
+        1
     }
   }
 
-  def disconnect(): Unit = if (!simulationMode) nativeShutdown()
+  override def shutdown(): Unit = closeAll()
 
-  def setExposureTime(microseconds: Double): Unit =
-    if (!simulationMode) nativeSetExposureTime(microseconds)
-
-  def setGain(gain: Double): Unit =
-    if (!simulationMode) nativeSetGain(gain)
-
-  def startStream(): Unit = if (!simulationMode) nativeStartStream()
-
-  def stopStream(): Unit = if (!simulationMode) nativeStopStream()
-
-  def getStreamFrame(timeoutMs: Int): Option[CameraFrame] =
-    if (simulationMode) Some(generateSimulatedFrame())
-    else Option(nativeGetStreamFrame(timeoutMs)).flatMap(parseFrame)
-
-  def takeSingleExposure(timeoutMs: Int): Option[CameraFrame] =
-    if (simulationMode) Some(generateSimulatedFrame())
-    else Option(nativeTakeSingleExposure(timeoutMs)).flatMap(parseFrame)
-
-  private def parseFrame(bytes: Array[Byte]): Option[CameraFrame] = {
-    if (bytes.length < 16) return None
-    val buf       = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-    val width     = buf.getInt
-    val height    = buf.getInt
-    val timestamp = buf.getLong
-    val data      = Arrays.copyOfRange(bytes, 16, bytes.length)
-    Some(CameraFrame(width, height, timestamp, data))
+  override def setExposureTime(microseconds: Double): Int = {
+    exposureMicros = Some(microseconds)
+    reconfigure()
+    0
   }
 
-  private def generateSimulatedFrame(): CameraFrame = {
+  override def setGain(gainValue: Double): Int = {
+    gain = Some(gainValue)
+    reconfigure()
+    0
+  }
+
+  override def startStream(): Int = {
+    try {
+      lastErr = None
+      if (streamSession.isEmpty) streamSession = session.map(_.startAcquisition())
+      0
+    }
+    catch {
+      case ex: Throwable =>
+        val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
+        lastErr = Some(s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top")
+        1
+    }
+  }
+
+  override def stopStream(): Int = {
+    streamSession.foreach(_.close())
+    streamSession = None
+    0
+  }
+
+  override def takeSingleExposure(timeoutMs: Int): CameraFrame | Null = {
+    session match {
+      case Some(s) =>
+        val stream = s.startAcquisition()
+        try toCameraFrame(stream.grabFrame(timeoutMs.toLong))
+        catch { case _: Throwable => null }
+        finally stream.close()
+      case None => null
+    }
+  }
+
+  override def getStreamFrame(timeoutMs: Int): CameraFrame | Null = {
+    streamSession match {
+      case Some(stream) =>
+        try toCameraFrame(stream.grabFrame(timeoutMs.toLong))
+        catch { case _: Throwable => null }
+      case None => null
+    }
+  }
+
+  private def reconfigure(): Unit = {
+    // imperx-camera does not expose runtime reconfigure on an open session:
+    // reopen the camera session with updated config when connected.
+    (system, session) match {
+      case (Some(cameraSystem), Some(oldSession)) =>
+        oldSession.close()
+        cameraSystem.listCameras().headOption.foreach { cameraInfo =>
+          session = Some(
+            cameraSystem.open(
+              cameraInfo.id,
+              CameraConfig(exposureMicros = exposureMicros, gain = gain, pixelFormat = Some("Mono8"))
+            )
+          )
+        }
+        streamSession = None
+      case _ => ()
+    }
+  }
+
+  private def toCameraFrame(frame: com.imperx.camera.Frame): CameraFrame =
+    CameraFrame(frame.width, frame.height, frame.timestampNanos, frame.bytes)
+
+  private def closeAll(): Unit = {
+    streamSession.foreach(_.close())
+    streamSession = None
+    session.foreach(_.close())
+    session = None
+    system.foreach(_.close())
+    system = None
+  }
+}
+
+// 3. Simulated Implementation (Strategy Pattern)
+class PacCameraSimulated(val simWidth: Int, val simHeight: Int) extends PacCameraProtocol {
+  override def initialize(ipAddress: String): Int         = 0
+  override def shutdown(): Unit                           = ()
+  override def setExposureTime(microseconds: Double): Int = 0
+  override def setGain(gain: Double): Int                 = 0
+  override def startStream(): Int                         = 0
+  override def stopStream(): Int                          = 0
+
+  override def takeSingleExposure(timeoutMs: Int): CameraFrame | Null = generateFrame()
+  override def getStreamFrame(timeoutMs: Int): CameraFrame | Null     = generateFrame()
+
+  private def generateFrame(): CameraFrame = {
     val raw = SimulatedData.create2DGaussian(
       width = simWidth,
       height = simHeight,
@@ -71,19 +162,52 @@ class PacCamera(simulationMode: Boolean, simWidth: Int, simHeight: Int) {
       rotationDegrees = 30.0,
       readNoiseSigma = 1.0
     )
-    val data = new Array[Byte](simWidth * simHeight)
-    for (y <- 0 until simHeight; x <- 0 until simWidth)
-      data(y * simWidth + x) = math.max(0, math.min(255, raw(y)(x).round.toInt)).toByte
-    CameraFrame(simWidth, simHeight, System.nanoTime(), data)
+
+    val pixelData = new Array[Byte](simWidth * simHeight)
+    for (y <- 0 until simHeight; x <- 0 until simWidth) {
+      pixelData(y * simWidth + x) = math.max(0, math.min(255, raw(y)(x).round.toInt)).toByte
+    }
+    CameraFrame(simWidth, simHeight, System.nanoTime(), pixelData)
+  }
+}
+
+case class CameraFrame(width: Int, height: Int, timestamp: Long, data: Array[Byte])
+
+// 4. The Wrapper Class (Injects the protocol, no flags)
+class PacCamera(protocol: PacCameraProtocol = new PacCameraNative) {
+  def protocolName: String                = protocol.getClass.getSimpleName
+  private def protocolErrorSuffix: String = protocol.lastError.map(e => s"; cause=$e").getOrElse("")
+
+  def connect(ipAddress: String): Unit = {
+    val rc = protocol.initialize(ipAddress)
+    if (rc != 0) throw new RuntimeException(s"Camera connect failed: code $rc${protocolErrorSuffix}")
   }
 
-  // JNI bridge — implemented in PacCameraJni.cpp, loaded as libpac-camera-jni.so
-  @native def nativeInitialize(ipAddress: String): Int
-  @native def nativeShutdown(): Unit
-  @native def nativeSetExposureTime(microseconds: Double): Int
-  @native def nativeSetGain(gain: Double): Int
-  @native def nativeStartStream(): Int
-  @native def nativeStopStream(): Int
-  @native def nativeTakeSingleExposure(timeoutMs: Int): Array[Byte]
-  @native def nativeGetStreamFrame(timeoutMs: Int): Array[Byte]
+  def disconnect(): Unit = protocol.shutdown()
+
+  def setExposureTime(microseconds: Double): Unit = {
+    val rc = protocol.setExposureTime(microseconds)
+    if (rc != 0) throw new RuntimeException(s"Set exposure failed: code $rc")
+  }
+
+  def setGain(gain: Double): Unit = {
+    val rc = protocol.setGain(gain)
+    if (rc != 0) throw new RuntimeException(s"Set gain failed: code $rc")
+  }
+
+  def startStream(): Unit = {
+    val rc = protocol.startStream()
+    if (rc != 0) throw new RuntimeException(s"Start stream failed: code $rc${protocolErrorSuffix}")
+  }
+
+  def stopStream(): Unit = {
+    val rc = protocol.stopStream()
+    if (rc != 0) throw new RuntimeException(s"Stop stream failed: code $rc")
+  }
+
+  def getStreamFrame(timeoutMs: Int): Option[CameraFrame] =
+    Option(protocol.getStreamFrame(timeoutMs))
+
+  def takeSingleExposure(timeoutMs: Int): Option[CameraFrame] =
+    Option(protocol.takeSingleExposure(timeoutMs))
 }

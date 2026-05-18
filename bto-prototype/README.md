@@ -49,3 +49,9 @@ sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContai
 ```
 sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/JBtoPrototypeContainer.conf"
 ```
+
+## Real Camera + VBDS Verification
+
+For end-to-end verification instructions (real Imperx camera + VBDS on `localhost:7777`), see:
+
+- [docs/REAL_CAMERA_VBDS_VERIFICATION.md](docs/REAL_CAMERA_VBDS_VERIFICATION.md)
