@@ -2,6 +2,7 @@ package lgsf.pacprototypehcd
 
 import com.imperx.camera.nativebridge.JnrImperxBinding
 import com.imperx.camera.{CameraConfig, CameraSession, CameraSystem, StreamSession}
+import scala.util.Random
 
 // 1. Define the protocol interface
 trait PacCameraProtocol {
@@ -126,7 +127,12 @@ class PacCameraNative extends PacCameraProtocol {
   }
 
   private def toCameraFrame(frame: com.imperx.camera.Frame): CameraFrame =
-    CameraFrame(frame.width, frame.height, frame.timestampNanos, frame.bytes)
+    CameraFrame(
+      frame.width,
+      frame.height,
+      frame.timestampNanos,
+      PacCamera.flipVertical(frame.bytes, frame.width, frame.height)
+    )
 
   private def closeAll(): Unit = {
     streamSession.foreach(_.close())
@@ -140,6 +146,19 @@ class PacCameraNative extends PacCameraProtocol {
 
 // 3. Simulated Implementation (Strategy Pattern)
 class PacCameraSimulated(val simWidth: Int, val simHeight: Int) extends PacCameraProtocol {
+  private val majorAxisFwhm   = 100.0
+  private val minorAxisFwhm   = 50.0
+  private val maxStepX        = majorAxisFwhm / 4.0
+  private val maxStepY        = minorAxisFwhm / 4.0
+  private val edgeMargin      = majorAxisFwhm
+  private val minCenterX      = edgeMargin
+  private val maxCenterX      = math.max(minCenterX, simWidth - 1.0 - edgeMargin)
+  private val minCenterY      = edgeMargin
+  private val maxCenterY      = math.max(minCenterY, simHeight - 1.0 - edgeMargin)
+  private val rng             = new Random()
+  private var centerX: Double = ((minCenterX + maxCenterX) / 2.0)
+  private var centerY: Double = ((minCenterY + maxCenterY) / 2.0)
+
   override def initialize(ipAddress: String): Int         = 0
   override def shutdown(): Unit                           = ()
   override def setExposureTime(microseconds: Double): Int = 0
@@ -151,13 +170,18 @@ class PacCameraSimulated(val simWidth: Int, val simHeight: Int) extends PacCamer
   override def getStreamFrame(timeoutMs: Int): CameraFrame | Null     = generateFrame()
 
   private def generateFrame(): CameraFrame = {
+    val dx = (rng.nextDouble() * 2.0 - 1.0) * maxStepX
+    val dy = (rng.nextDouble() * 2.0 - 1.0) * maxStepY
+    centerX = clamp(centerX + dx, minCenterX, maxCenterX)
+    centerY = clamp(centerY + dy, minCenterY, maxCenterY)
+
     val raw = SimulatedData.create2DGaussian(
       width = simWidth,
       height = simHeight,
-      majorAxisFWHM = 100.0,
-      minorAxisFWHM = 50.0,
-      centerX = simWidth / 2.0,
-      centerY = simHeight / 2.0,
+      majorAxisFWHM = majorAxisFwhm,
+      minorAxisFWHM = minorAxisFwhm,
+      centerX = centerX,
+      centerY = centerY,
       peakMax = 255.0,
       rotationDegrees = 30.0,
       readNoiseSigma = 1.0
@@ -169,6 +193,9 @@ class PacCameraSimulated(val simWidth: Int, val simHeight: Int) extends PacCamer
     }
     CameraFrame(simWidth, simHeight, System.nanoTime(), pixelData)
   }
+
+  private def clamp(v: Double, lo: Double, hi: Double): Double =
+    math.max(lo, math.min(hi, v))
 }
 
 case class CameraFrame(width: Int, height: Int, timestamp: Long, data: Array[Byte])
@@ -210,4 +237,20 @@ class PacCamera(protocol: PacCameraProtocol = new PacCameraNative) {
 
   def takeSingleExposure(timeoutMs: Int): Option[CameraFrame] =
     Option(protocol.takeSingleExposure(timeoutMs))
+}
+
+object PacCamera {
+  private[pacprototypehcd] def flipVertical(data: Array[Byte], width: Int, height: Int): Array[Byte] = {
+    if (data == null || width <= 0 || height <= 0 || data.length < width * height) return data
+    val out     = new Array[Byte](data.length)
+    val rowSize = width
+    var row     = 0
+    while (row < height) {
+      val srcRow = row * rowSize
+      val dstRow = (height - 1 - row) * rowSize
+      System.arraycopy(data, srcRow, out, dstRow, rowSize)
+      row += 1
+    }
+    out
+  }
 }

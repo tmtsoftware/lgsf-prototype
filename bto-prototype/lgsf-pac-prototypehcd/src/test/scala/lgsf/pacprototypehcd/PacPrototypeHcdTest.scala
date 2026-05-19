@@ -17,6 +17,7 @@ import org.scalatest.funsuite.AnyFunSuiteLike
 import java.nio.file.{Files, Paths}
 import scala.concurrent.Await
 import scala.concurrent.duration.*
+import java.nio.charset.StandardCharsets
 
 class PacPrototypeHcdTest extends ScalaTestFrameworkTestKit(AlarmServer, EventServer) with AnyFunSuiteLike {
 
@@ -143,6 +144,63 @@ class PacPrototypeHcdTest extends ScalaTestFrameworkTestKit(AlarmServer, EventSe
       10.seconds
     )
     assert(response.isInstanceOf[Completed] || response.isInstanceOf[Error], s"Unexpected response: $response")
+  }
+
+  test("SetSimulationMode should switch mode and complete") {
+    implicit val timeout: Timeout = 10.seconds
+    val toReal = Await.result(
+      commandService.submitAndWait(
+        Setup(Prefix("LGSF.test.client"), CommandName("SetSimulationMode"))
+          .add(PacPrototypeHcdHandlers.simulationModeKey.set(false))
+      ),
+      10.seconds
+    )
+    assert(toReal.isInstanceOf[Completed], s"Expected Completed but got: $toReal")
+
+    val toSim = Await.result(
+      commandService.submitAndWait(
+        Setup(Prefix("LGSF.test.client"), CommandName("SetSimulationMode"))
+          .add(PacPrototypeHcdHandlers.simulationModeKey.set(true))
+      ),
+      10.seconds
+    )
+    assert(toSim.isInstanceOf[Completed], s"Expected Completed but got: $toSim")
+  }
+
+  test("LoadConfig should load config from filesystem path") {
+    implicit val timeout: Timeout = 10.seconds
+    val tempConf                  = Paths.get(System.getProperty("java.io.tmpdir"), s"pac-load-${System.nanoTime()}.conf")
+    val confText =
+      """pac-prototype-hcd {
+        |  frame-period-millis = 333
+        |}
+        |""".stripMargin
+    Files.writeString(tempConf, confText, StandardCharsets.UTF_8)
+    try {
+      val response = Await.result(
+        commandService.submitAndWait(
+          Setup(Prefix("LGSF.test.client"), CommandName("LoadConfig"))
+            .add(PacPrototypeHcdHandlers.configPathKey.set(tempConf.toString))
+        ),
+        10.seconds
+      )
+      assert(response.isInstanceOf[Completed], s"Expected Completed but got: $response")
+    }
+    finally {
+      Files.deleteIfExists(tempConf)
+    }
+  }
+
+  test("LoadConfig should load config from classpath resource name") {
+    implicit val timeout: Timeout = 10.seconds
+    val response = Await.result(
+      commandService.submitAndWait(
+        Setup(Prefix("LGSF.test.client"), CommandName("LoadConfig"))
+          .add(PacPrototypeHcdHandlers.configPathKey.set("application.conf"))
+      ),
+      10.seconds
+    )
+    assert(response.isInstanceOf[Completed], s"Expected Completed but got: $response")
   }
 
   test("Unknown command should return Invalid response") {

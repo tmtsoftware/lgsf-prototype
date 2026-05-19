@@ -93,6 +93,49 @@ class PacCameraTest extends AnyFunSuite {
     assert(f.data.exists(_ != 0.toByte), "Simulated frame should contain non-zero pixel data")
   }
 
+  test("PacCameraSimulated spot should move within bounds and stay in-field") {
+    val width  = 512
+    val height = 384
+    val camera = new PacCamera(new PacCameraSimulated(width, height))
+    camera.connect("sim://local")
+
+    val majorFwhm = 100.0
+    val minorFwhm = 50.0
+    val maxStepX  = majorFwhm / 4.0
+    val maxStepY  = minorFwhm / 4.0
+    val margin    = majorFwhm
+    val tolerance = 2.0
+
+    val centroids = (1 to 25).flatMap { _ =>
+      camera.getStreamFrame(1000).map(FrameProcessor.computeCentroid)
+    }
+    assert(centroids.nonEmpty, "Expected simulated frames for centroid checks")
+
+    centroids.foreach { case (x, y) =>
+      assert(x >= margin - tolerance, s"Centroid x too close to edge: $x")
+      assert(x <= (width - 1.0 - margin + tolerance), s"Centroid x too close to edge: $x")
+      assert(y >= margin - tolerance, s"Centroid y too close to edge: $y")
+      assert(y <= (height - 1.0 - margin + tolerance), s"Centroid y too close to edge: $y")
+    }
+
+    centroids.sliding(2).foreach {
+      case Seq((x1, y1), (x2, y2)) =>
+        assert(math.abs(x2 - x1) <= maxStepX + tolerance, s"Step in x too large: ${math.abs(x2 - x1)}")
+        assert(math.abs(y2 - y1) <= maxStepY + tolerance, s"Step in y too large: ${math.abs(y2 - y1)}")
+      case _ => ()
+    }
+  }
+
+  test("PacCamera.flipVertical should invert image rows") {
+    val width  = 3
+    val height = 2
+    // row-major: [1,2,3] then [4,5,6]
+    val input    = Array[Byte](1, 2, 3, 4, 5, 6)
+    val expected = Array[Byte](4, 5, 6, 1, 2, 3)
+    val actual   = PacCamera.flipVertical(input, width, height)
+    assert(actual.sameElements(expected), s"Expected ${expected.mkString(",")} got ${actual.mkString(",")}")
+  }
+
 }
 
 // Simple call-tracking mock for unit testing

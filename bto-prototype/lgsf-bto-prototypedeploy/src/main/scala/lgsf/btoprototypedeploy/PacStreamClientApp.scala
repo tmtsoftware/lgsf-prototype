@@ -13,7 +13,7 @@ import org.apache.pekko.util.Timeout
 import scala.concurrent.Await
 import scala.concurrent.duration.*
 
-object PacPrototypeHcdVerifyApp {
+object PacStreamClientApp {
 
   final case class Settings(
       prefix: String = "LGSF.pac.prototypeHcd",

@@ -41,17 +41,17 @@ Run the container cmd script with arguments. For example:
 * Run the HCD in a standalone mode with a local config file (The standalone config format is different than the container format):
 
 ```
-sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/BtoPrototypehcdStandalone.conf"
+sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ../lgsf-bto-prototypedeploy/src/main/resources/PacPrototypeHcdStandalone.conf"
 ```
 
 * Start the HCD and assembly in a container using the Java implementations:
 
 ```
-sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ./src/main/resources/JBtoPrototypeContainer.conf"
+sbt "lgsf-bto-prototypedeploy/runMain lgsf.btoprototypedeploy.BtoPrototypeContainerCmdApp --local ../lgsf-bto-prototypedeploy/src/main/resources/BtoPrototypeContainer.conf"
 ```
 
 ## Real Camera + VBDS Verification
 
-For end-to-end verification instructions (real Imperx camera + VBDS on `localhost:7777`), see:
+For end-to-end verification instructions (real/simulated camera flows + VBDS using the VBDS-advertised HTTP host/port), see:
 
 - [docs/REAL_CAMERA_VBDS_VERIFICATION.md](docs/REAL_CAMERA_VBDS_VERIFICATION.md)

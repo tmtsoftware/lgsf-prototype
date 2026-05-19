@@ -57,6 +57,16 @@ object PacTakeSingleExposureClientApp {
       val commandService = CommandServiceFactory.make(location)
       val sourcePrefix   = Prefix(settings.clientPrefix)
 
+      val targetSimulationMode = settings.cameraMode match {
+        case CameraMode.Real      => false
+        case CameraMode.Simulated => true
+      }
+      submitAndPrint(
+        commandService,
+        Setup(sourcePrefix, CommandName("SetSimulationMode"))
+          .add(PacPrototypeHcdHandlers.simulationModeKey.set(targetSimulationMode))
+      )
+
       val connectCommand = settings.cameraMode match {
         case CameraMode.Real =>
           Setup(sourcePrefix, CommandName("ConnectCamera"))
@@ -89,7 +99,7 @@ object PacTakeSingleExposureClientApp {
         case CameraMode.Simulated =>
           println("Requested SIMULATED camera mode")
       }
-      println("Note: actual simulation/real behavior is controlled by the HCD configuration (pac-prototype-hcd.simulation-mode).")
+      println(s"SetSimulationMode sent: simulationMode=$targetSimulationMode")
     }
     finally {
       actorSystem.terminate()

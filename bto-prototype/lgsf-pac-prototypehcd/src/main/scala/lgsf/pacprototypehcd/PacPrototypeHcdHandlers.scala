@@ -14,9 +14,11 @@ import csw.params.commands.{ControlCommand, Setup}
 import csw.params.core.generics.{Key, KeyType}
 import csw.time.core.models.UTCTime
 import csw.params.core.models.Id
+import com.typesafe.config.Config
 import java.time.LocalDateTime
 import java.time.Duration
 import java.time.format.DateTimeFormatter
+import java.nio.file.{Files, Paths}
 
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration.*
@@ -31,6 +33,8 @@ import scala.concurrent.duration.*
  *   StartStream        periodMillis: Long (optional, falls back to config)
  *   StopStream         (no params)
  *   TakeSingleExposure exposureTimeUs: Float (optional), timeoutMs: Int (optional)
+ *   SetSimulationMode  simulationMode: Boolean (required)
+ *   LoadConfig         configPath: String (required)
  *
  * In simulation mode (pac-prototype-hcd.simulation-mode = true in application.conf) the
  * native library is not loaded and synthetic Gaussian spot images are produced instead.
@@ -41,25 +45,47 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
   import cswCtx.*
   implicit val ec: ExecutionContextExecutor = ctx.executionContext
 
-  private val log    = loggerFactory.getLogger
-  private val config = ConfigFactory.load()
+  private val log                    = loggerFactory.getLogger
+  private var config                 = ConfigFactory.load()
+  private val simulationModePropName = "pac-prototype-hcd.simulation-mode"
+  private val simulationModePropRaw  = Option(System.getProperty(simulationModePropName))
+  private val initialSimulationMode = simulationModePropRaw match {
+    case Some(v) => v.trim.equalsIgnoreCase("true")
+    case None    => config.getBoolean(simulationModePropName)
+  }
+  private val defaultSimulationMode = config.getBoolean(simulationModePropName)
+  private var simulationMode        = initialSimulationMode
+
   private def errorDetails(ex: Throwable): String = {
     val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
     s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top"
   }
 
-  private val camera: PacCamera = {
-    val simMode = config.getBoolean("pac-prototype-hcd.simulation-mode")
-    val width   = config.getInt("camera.width")
-    val height  = config.getInt("camera.height")
+  private def createCamera(mode: Boolean): PacCamera = {
+    val width  = config.getInt("camera.width")
+    val height = config.getInt("camera.height")
     val protocol: PacCameraProtocol =
-      if (simMode) new PacCameraSimulated(width, height)
+      if (mode) new PacCameraSimulated(width, height)
       else new PacCameraNative()
     new PacCamera(protocol)
   }
+  private var camera: PacCamera = createCamera(simulationMode)
 
   private var vbdsPublisherRef: Option[ActorRef[VbdsPublisherActor.Command]] = None
   private var frameProcessorRef: Option[ActorRef[FrameProcessor.Command]]    = None
+
+  private def stopAndClearFrameProcessor(): Unit = {
+    frameProcessorRef.foreach { ref =>
+      ref ! FrameProcessor.Stop
+      ctx.stop(ref)
+    }
+    frameProcessorRef = None
+  }
+
+  private def stopAndClearVbdsPublisher(): Unit = {
+    vbdsPublisherRef.foreach(ctx.stop)
+    vbdsPublisherRef = None
+  }
 
   private def getOrCreateVbdsPublisher(): Option[ActorRef[VbdsPublisherActor.Command]] = {
     if (vbdsPublisherRef.isEmpty) {
@@ -97,13 +123,73 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
     }
   }
 
+  private def parseConfigFromPath(path: String): Config = {
+    val trimmed = path.trim
+    if (trimmed.isEmpty) throw new IllegalArgumentException("configPath cannot be empty")
+
+    def isFilesystemPath(s: String): Boolean = {
+      val p = Paths.get(s)
+      p.isAbsolute || s.startsWith(".") || s.contains("/") || s.contains("\\")
+    }
+
+    if (isFilesystemPath(trimmed)) {
+      val resolved = {
+        if (trimmed.startsWith("~")) Paths.get(System.getProperty("user.home") + trimmed.drop(1))
+        else Paths.get(trimmed)
+      }.toAbsolutePath.normalize()
+      if (!Files.exists(resolved)) throw new IllegalArgumentException(s"Config file not found: $resolved")
+      ConfigFactory.parseFile(resolved.toFile).resolve()
+    }
+    else {
+      val exact = ConfigFactory.parseResources(trimmed).resolve()
+      if (!exact.isEmpty) exact
+      else {
+        val base = if (trimmed.endsWith(".conf")) trimmed.stripSuffix(".conf") else trimmed
+        val any  = ConfigFactory.parseResourcesAnySyntax(base).resolve()
+        if (!any.isEmpty) any
+        else throw new IllegalArgumentException(s"Config resource not found: $trimmed")
+      }
+    }
+  }
+
+  private def applyRuntimeConfig(overrideConfig: Config): Unit = {
+    val merged  = overrideConfig.withFallback(config).resolve()
+    val oldMode = simulationMode
+    val newMode = merged.getBoolean(simulationModePropName)
+    config = merged
+
+    // Apply runtime changes safely: stop stream and rebuild processor/camera as needed.
+    stopAndClearFrameProcessor()
+    stopAndClearVbdsPublisher()
+
+    if (newMode != oldMode) {
+      camera.disconnect()
+      simulationMode = newMode
+      camera = createCamera(simulationMode)
+      log.info(s"LoadConfig applied simulation mode change: $oldMode -> $newMode; protocol=${camera.protocolName}")
+    }
+    else {
+      log.info(s"LoadConfig applied with unchanged simulation mode: $simulationMode")
+    }
+  }
+
   override def initialize(): Unit =
     log.info("Initializing pac.prototypeHcd...")
+    log.info(s"simulation-mode=$simulationMode protocol=${camera.protocolName}")
     log.info(
-      s"simulation-mode=${config.getBoolean("pac-prototype-hcd.simulation-mode")} protocol=${camera.protocolName}"
+      s"simulation-mode config diagnostics: default=$defaultSimulationMode, system-property-present=${simulationModePropRaw.isDefined}, system-property-value=${simulationModePropRaw.getOrElse("<unset>")}"
     )
     log.info(s"default camera-ip=${config.getString("pac-prototype-hcd.camera-ip")}")
     log.info(s"default frame-period-millis=${config.getLong("pac-prototype-hcd.frame-period-millis")}")
+    if (config.hasPath("pac-prototype-hcd.vbds")) {
+      val vbdsCfg = config.getConfig("pac-prototype-hcd.vbds")
+      log.info(
+        s"vbds config: enabled=${vbdsCfg.getBoolean("enabled")}, host=${vbdsCfg.getString("host")}, port=${vbdsCfg.getInt("port")}, stream-name=${vbdsCfg.getString("stream-name")}, content-type=${vbdsCfg.getString("content-type")}, auto-create-stream=${vbdsCfg.getBoolean("auto-create-stream")}, request-timeout-millis=${vbdsCfg.getLong("request-timeout-millis")}"
+      )
+    }
+    else {
+      log.warn("vbds config: section pac-prototype-hcd.vbds not found")
+    }
 
   override def onLocationTrackingEvent(trackingEvent: TrackingEvent): Unit = {}
 
@@ -241,6 +327,53 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
             Error(runId, ex.getMessage)
         }
 
+      case setup: Setup if setup.commandName.name == "SetSimulationMode" =>
+        setup.get(PacPrototypeHcdHandlers.simulationModeKey).map(_.head) match {
+          case None =>
+            Error(runId, "Missing required parameter: simulationMode")
+
+          case Some(newMode) if newMode == simulationMode =>
+            log.info(s"SetSimulationMode received: already in requested mode simulationMode=$simulationMode")
+            Completed(runId)
+
+          case Some(newMode) =>
+            log.info(
+              s"SetSimulationMode switching mode: from simulationMode=$simulationMode (${camera.protocolName}) to simulationMode=$newMode"
+            )
+            try {
+              stopAndClearFrameProcessor()
+              camera.disconnect()
+              simulationMode = newMode
+              camera = createCamera(simulationMode)
+              log.info(s"SetSimulationMode complete: simulationMode=$simulationMode protocol=${camera.protocolName}")
+              Completed(runId)
+            }
+            catch {
+              case ex: Exception =>
+                log.error(s"SetSimulationMode failed: ${errorDetails(ex)}")
+                Error(runId, ex.getMessage)
+            }
+        }
+
+      case setup: Setup if setup.commandName.name == "LoadConfig" =>
+        setup.get(PacPrototypeHcdHandlers.configPathKey).map(_.head) match {
+          case None =>
+            Error(runId, "Missing required parameter: configPath")
+          case Some(path) =>
+            try {
+              log.info(s"LoadConfig requested: path=$path")
+              val loaded = parseConfigFromPath(path)
+              applyRuntimeConfig(loaded)
+              log.info(s"LoadConfig completed successfully: path=$path")
+              Completed(runId)
+            }
+            catch {
+              case ex: Exception =>
+                log.error(s"LoadConfig failed: ${errorDetails(ex)}")
+                Error(runId, ex.getMessage)
+            }
+        }
+
       case _ =>
         log.warn(s"Unsupported command received runId=$runId name=${controlCommand.commandName.name}")
         Invalid(runId, UnsupportedCommandIssue(s"Unknown command: ${controlCommand.commandName.name}"))
@@ -264,7 +397,9 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
 
 object PacPrototypeHcdHandlers {
   val cameraIpKey: Key[String]               = KeyType.StringKey.make("ipAddress")
+  val configPathKey: Key[String]             = KeyType.StringKey.make("configPath")
   val singleExposureFilePathKey: Key[String] = KeyType.StringKey.make("filepath")
+  val simulationModeKey: Key[Boolean]        = KeyType.BooleanKey.make("simulationMode")
   val exposureTimeUsKey: Key[Float]          = KeyType.FloatKey.make("exposureTimeUs")
   val gainKey: Key[Float]                    = KeyType.FloatKey.make("gain")
   val periodMillisKey: Key[Long]             = KeyType.LongKey.make("periodMillis")
