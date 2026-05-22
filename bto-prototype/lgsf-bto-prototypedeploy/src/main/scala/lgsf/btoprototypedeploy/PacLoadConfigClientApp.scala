@@ -9,6 +9,7 @@ import csw.params.commands.CommandResponse
 import csw.params.commands.{CommandName, Setup}
 import csw.prefix.models.Prefix
 import lgsf.pacprototypehcd.PacPrototypeHcdHandlers
+import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.SpawnProtocol
 import org.apache.pekko.util.Timeout
 
@@ -29,7 +30,8 @@ object PacLoadConfigClientApp {
       throw new IllegalArgumentException("Missing required argument: --config-path <path-or-resource>")
     }
 
-    implicit val actorSystem      = ActorSystemFactory.remote(SpawnProtocol(), "pac-load-config-client")
+    implicit val actorSystem: ActorSystem[SpawnProtocol.Command] =
+      ActorSystemFactory.remote(SpawnProtocol(), "pac-load-config-client")
     implicit val timeout: Timeout = 20.seconds
 
     try {

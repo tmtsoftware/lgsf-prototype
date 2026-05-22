@@ -1,10 +1,7 @@
 package lgsf.pacprototypehcd
 
-import com.typesafe.config.ConfigFactory
-import org.apache.pekko.actor.typed.scaladsl.ActorContext
-import org.apache.pekko.actor.typed.{ActorRef, Behavior}
+import com.typesafe.config.{Config, ConfigFactory}
 import csw.command.client.messages.TopLevelActorMessage
-import csw.event.api.scaladsl.EventPublisher
 import csw.framework.models.CswContext
 import csw.framework.scaladsl.ComponentHandlers
 import csw.location.api.models.TrackingEvent
@@ -12,14 +9,14 @@ import csw.params.commands.CommandIssue.UnsupportedCommandIssue
 import csw.params.commands.CommandResponse.*
 import csw.params.commands.{ControlCommand, Setup}
 import csw.params.core.generics.{Key, KeyType}
-import csw.time.core.models.UTCTime
 import csw.params.core.models.Id
-import com.typesafe.config.Config
-import java.time.LocalDateTime
-import java.time.Duration
-import java.time.format.DateTimeFormatter
-import java.nio.file.{Files, Paths}
+import csw.time.core.models.UTCTime
+import org.apache.pekko.actor.typed.ActorRef
+import org.apache.pekko.actor.typed.scaladsl.ActorContext
 
+import java.nio.file.{Files, Paths}
+import java.time.{Duration, LocalDateTime}
+import java.time.format.DateTimeFormatter
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration.*
 
@@ -298,8 +295,8 @@ class PacPrototypeHcdHandlers(ctx: ActorContext[TopLevelActorMessage], cswCtx: C
           val timestamp       = LocalDateTime.now().format(formatter)
           val baseName        = "pac"
           val homePath        = System.getProperty("user.home")
-          val defaultPath     = s"${homePath}/tmpData"
-          val defaultFilePath = s"${defaultPath}/${baseName}_${timestamp}.fits"
+          val defaultPath     = s"$homePath/tmpData"
+          val defaultFilePath = s"$defaultPath/${baseName}_$timestamp.fits"
 
           val filePath = setup
             .get(PacPrototypeHcdHandlers.singleExposureFilePathKey)

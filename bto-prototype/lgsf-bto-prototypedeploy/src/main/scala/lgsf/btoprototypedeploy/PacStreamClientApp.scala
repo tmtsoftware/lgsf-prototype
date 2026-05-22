@@ -7,9 +7,11 @@ import csw.location.client.ActorSystemFactory
 import csw.location.client.scaladsl.HttpLocationServiceFactory
 import csw.params.commands.{CommandName, Setup}
 import csw.prefix.models.Prefix
+import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.SpawnProtocol
 import org.apache.pekko.util.Timeout
 
+import scala.annotation.tailrec
 import scala.concurrent.Await
 import scala.concurrent.duration.*
 
@@ -24,7 +26,8 @@ object PacStreamClientApp {
   def main(args: Array[String]): Unit = {
     val settings = parseArgs(args.toList)
 
-    implicit val actorSystem      = ActorSystemFactory.remote(SpawnProtocol(), "pac-prototype-hcd-verify")
+    implicit val actorSystem: ActorSystem[SpawnProtocol.Command] =
+      ActorSystemFactory.remote(SpawnProtocol(), "pac-prototype-hcd-verify")
     implicit val timeout: Timeout = 15.seconds
 
     try {
@@ -59,6 +62,7 @@ object PacStreamClientApp {
   }
 
   private def parseArgs(args: List[String]): Settings = {
+    @tailrec
     def loop(rest: List[String], cur: Settings): Settings = rest match {
       case "--prefix" :: v :: tail           => loop(tail, cur.copy(prefix = v))
       case "--period-ms" :: v :: tail        => loop(tail, cur.copy(streamPeriodMillis = v.toLong))

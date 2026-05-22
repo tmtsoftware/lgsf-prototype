@@ -10,6 +10,7 @@ import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, TimerSche
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 import java.io.ByteArrayOutputStream
+import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration.*
 
 object FrameProcessor {
@@ -18,11 +19,16 @@ object FrameProcessor {
   case object Stop                               extends Command
   case object Tick                               extends Command
 
-  val centroidXKey      = KeyType.DoubleKey.make("x")
-  val centroidYKey      = KeyType.DoubleKey.make("y")
-  val frameTimestampKey = KeyType.LongKey.make("timestamp")
+  val centroidXKey: csw.params.core.generics.Key[Double]    = KeyType.DoubleKey.make("x")
+  val centroidYKey: csw.params.core.generics.Key[Double]    = KeyType.DoubleKey.make("y")
+  val frameTimestampKey: csw.params.core.generics.Key[Long] = KeyType.LongKey.make("timestamp")
 
-  def buildCentroidEvent(prefix: Prefix, frame: CameraFrame): SystemEvent = {
+  private def errorDetails(ex: Throwable): String = {
+    val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
+    s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top"
+  }
+
+  private def buildCentroidEvent(prefix: Prefix, frame: CameraFrame): SystemEvent = {
     val (x, y) = computeCentroid(frame)
     SystemEvent(prefix, EventName("cameraCentroid"))
       .add(centroidXKey.set(x))
@@ -163,9 +169,9 @@ object FrameProcessor {
       case Tick =>
         camera.getStreamFrame(5000) match {
           case Some(frame) =>
-            implicit val ec = ctx.executionContext
-            val event       = buildCentroidEvent(prefix, frame)
-            val (cx, cy)    = computeCentroid(frame)
+            implicit val ec: ExecutionContextExecutor = ctx.executionContext
+            val event                                 = buildCentroidEvent(prefix, frame)
+            val (cx, cy)                              = computeCentroid(frame)
             publisher.publish(event).failed.foreach { ex =>
               ctx.log.error(s"Failed to publish centroid event: ${errorDetails(ex)}")
             }
@@ -192,8 +198,4 @@ object FrameProcessor {
         ctx.log.info("FrameProcessor stopped")
         idle(timers, camera, publisher, prefix, vbdsPublisher)
     }
-}
-private def errorDetails(ex: Throwable): String = {
-  val top = ex.getStackTrace.headOption.map(_.toString).getOrElse("no-stack")
-  s"${ex.getClass.getSimpleName}: ${ex.getMessage}; at $top"
 }

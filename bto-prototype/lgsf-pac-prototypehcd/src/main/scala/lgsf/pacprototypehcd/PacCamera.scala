@@ -156,8 +156,8 @@ class PacCameraSimulated(val simWidth: Int, val simHeight: Int) extends PacCamer
   private val minCenterY      = edgeMargin
   private val maxCenterY      = math.max(minCenterY, simHeight - 1.0 - edgeMargin)
   private val rng             = new Random()
-  private var centerX: Double = ((minCenterX + maxCenterX) / 2.0)
-  private var centerY: Double = ((minCenterY + maxCenterY) / 2.0)
+  private var centerX: Double = (minCenterX + maxCenterX) / 2.0
+  private var centerY: Double = (minCenterY + maxCenterY) / 2.0
 
   override def initialize(ipAddress: String): Int         = 0
   override def shutdown(): Unit                           = ()
@@ -207,7 +207,7 @@ class PacCamera(protocol: PacCameraProtocol = new PacCameraNative) {
 
   def connect(ipAddress: String): Unit = {
     val rc = protocol.initialize(ipAddress)
-    if (rc != 0) throw new RuntimeException(s"Camera connect failed: code $rc${protocolErrorSuffix}")
+    if (rc != 0) throw new RuntimeException(s"Camera connect failed: code $rc$protocolErrorSuffix")
   }
 
   def disconnect(): Unit = protocol.shutdown()
@@ -224,7 +224,7 @@ class PacCamera(protocol: PacCameraProtocol = new PacCameraNative) {
 
   def startStream(): Unit = {
     val rc = protocol.startStream()
-    if (rc != 0) throw new RuntimeException(s"Start stream failed: code $rc${protocolErrorSuffix}")
+    if (rc != 0) throw new RuntimeException(s"Start stream failed: code $rc$protocolErrorSuffix")
   }
 
   def stopStream(): Unit = {

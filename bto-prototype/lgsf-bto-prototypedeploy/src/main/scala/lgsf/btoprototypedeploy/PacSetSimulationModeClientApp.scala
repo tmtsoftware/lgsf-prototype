@@ -9,6 +9,7 @@ import csw.params.commands.CommandResponse
 import csw.params.commands.{CommandName, Setup}
 import csw.prefix.models.Prefix
 import lgsf.pacprototypehcd.PacPrototypeHcdHandlers
+import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.SpawnProtocol
 import org.apache.pekko.util.Timeout
 
@@ -26,7 +27,8 @@ object PacSetSimulationModeClientApp {
   def main(args: Array[String]): Unit = {
     val settings = parseArgs(args.toList)
 
-    implicit val actorSystem      = ActorSystemFactory.remote(SpawnProtocol(), "pac-set-simulation-mode-client")
+    implicit val actorSystem: ActorSystem[SpawnProtocol.Command] =
+      ActorSystemFactory.remote(SpawnProtocol(), "pac-set-simulation-mode-client")
     implicit val timeout: Timeout = 20.seconds
 
     try {
